@@ -217,6 +217,7 @@ DeltaForce = {
 	G1 = false, -- G1键状态
 	currentTime = 0, -- 此刻
 	bulletIndex = 0, -- 第几颗子弹
+	lastClickIndex = 0, -- 连点模式已触发的射击间隔
 	peakEnabled = false, -- peak摇摆开关 (通过G_bind指令切换)
 	peakSleep = 175, -- peak摇摆延迟(ms)，Q按下后等待此时间再按E
 	peakState = 0, -- peak状态: 0=就绪, 1=已按Q等待E, 2=已按E等待下一轮Q
@@ -328,6 +329,10 @@ function DeltaForce.init ()
 
 		if mode >= 1 then
 			DeltaForce.ballistics[type] = DeltaForce.execOptions(type, userInfo.ballisticData[type])
+			if mode == 2 then
+				DeltaForce.ballistics[type].amount = math.min(DeltaForce.ballistics[type].amount, 3)
+				DeltaForce.ballistics[type].duration = DeltaForce.ballistics[type].interval * DeltaForce.ballistics[type].amount
+			end
 			DeltaForce.ballistics[type].autoContinuousFiring = ({ 0, 0, 1 })[
 				math.max(1, math.min(mode + 1, 3))
 			]
@@ -351,25 +356,44 @@ function DeltaForce.auto (options)
 
 	-- Accurate aiming press gun
 	DeltaForce.currentTime = GetRunningTime()
-	DeltaForce.bulletIndex = math.ceil(((DeltaForce.currentTime - DeltaForce.startTime == 0 and {1} or {DeltaForce.currentTime - DeltaForce.startTime})[1]) / options.interval) + 1
-
-	if DeltaForce.bulletIndex > options.amount then return false end
 	local elapsed = DeltaForce.currentTime - DeltaForce.startTime
-	local timeRatio = elapsed / (options.interval * (DeltaForce.bulletIndex - 1))
+	local position = elapsed / options.interval
+	local baseIndex = math.floor(position) + 1
+	local fraction = position - math.floor(position)
+	local targetX
+	local targetY
+
+	if baseIndex < options.amount then
+		DeltaForce.bulletIndex = baseIndex + 1
+		targetX = options.ballisticX[baseIndex] + (options.ballisticX[baseIndex + 1] - options.ballisticX[baseIndex]) * fraction
+		targetY = options.ballistic[baseIndex] + (options.ballistic[baseIndex + 1] - options.ballistic[baseIndex]) * fraction
+	else
+		DeltaForce.bulletIndex = options.amount
+		local overflow = position - (options.amount - 1)
+		local lastX = options.ballisticX[options.amount] - (options.ballisticX[options.amount - 1] or 0)
+		local lastY = options.ballistic[options.amount] - (options.ballistic[options.amount - 1] or 0)
+		targetX = options.ballisticX[options.amount] + lastX * overflow
+		targetY = options.ballistic[options.amount] + lastY * overflow
+	end
+
 	-- Developer Debugging Mode
-	local debugX = (IsKeyLockOn("scrolllock") and { (DeltaForce.bulletIndex - 1) * DeltaForce.xLengthForDebug } or { 0 })[1]
-	local x = math.ceil(timeRatio * (options.ballisticX[DeltaForce.bulletIndex] + debugX)) - DeltaForce.xCounter
-	local y = math.ceil(timeRatio * options.ballistic[DeltaForce.bulletIndex]) - DeltaForce.counter
+	local debugX = IsKeyLockOn("scrolllock") and position * DeltaForce.xLengthForDebug or 0
+	local x = math.ceil(targetX + debugX) - DeltaForce.xCounter
+	local y = math.ceil(targetY) - DeltaForce.counter
 	-- 4-fold pressure gun mode
 	local realY = DeltaForce.getRealY(options, y)
 	MoveMouseRelative(x, realY)
 	-- Whether to issue automatically or not
 	if options.autoContinuousFiring == 1 then
-		PressAndReleaseMouseButton(1)
+		local clickIndex = math.floor(position)
+		if clickIndex > DeltaForce.lastClickIndex then
+			PressAndReleaseMouseButton(1)
+			DeltaForce.lastClickIndex = clickIndex
+		end
 	end
 
 	-- Real-time operation parameters
-	DeltaForce.autoLog(options, x, y)
+	DeltaForce.autoLog(options, x, y, targetX, targetY)
 	DeltaForce.outputLogRender()
 
 	DeltaForce.xCounter = DeltaForce.xCounter + x
@@ -399,7 +423,7 @@ function DeltaForce.getRealY (options, y)
 	if DeltaForce.isAimingState("ADS") then
 		-- ADS: no additional adjustment
 	elseif DeltaForce.isAimingState("Aim") then
-		realY = y * userInfo.sensitivity.Aim * DeltaForce.generalSensitivityRatio
+		realY = y * userInfo.sensitivity.Aim
 	end
 
 	return math.round(realY)
@@ -478,6 +502,7 @@ end
 
 --[[ Script running status ]]
 function DeltaForce.runStatus ()
+	if not DeltaForce.ballistics[DeltaForce.bulletType] then return false end
 	if userInfo.startControl == "capslock" then
 		return IsKeyLockOn("capslock")
 	elseif userInfo.startControl == "numlock" then
@@ -581,6 +606,7 @@ end
 -- output Log Gun Info
 function DeltaForce.outputLogGunInfo ()
 	local k = DeltaForce.bulletType
+	if not DeltaForce.ballistics[k] then return "No enabled caliber.\n" end
 
 	return table.concat({
 		"Currently series: [ ", k, " ]\n",
@@ -596,10 +622,10 @@ function DeltaForce.outputLogRecoilTable ()
 	local data = DeltaForce.ballistics[k]
 	local resY = "Y: { "
 	local resX = "X: { "
-	for j = 1, #data.ballistic do
+	for j = 1, data.amount do
 		resY = table.concat({ resY, data.ballistic[j] })
 		resX = table.concat({ resX, data.ballisticX[j] })
-		if j ~= #data.ballistic then
+		if j ~= data.amount then
 			resY = table.concat({ resY, ", " })
 			resX = table.concat({ resX, ", " })
 		end
@@ -611,13 +637,13 @@ function DeltaForce.outputLogRecoilTable ()
 end
 
 --[[ log of DeltaForce.auto ]]
-function DeltaForce.autoLog (options, x, y)
+function DeltaForce.autoLog (options, x, y, targetX, targetY)
 	DeltaForce.renderDom.autoLog = table.concat({
 		"----------------------------------- Automatically counteracting gun recoil -----------------------------------\n",
 		"------------------------------------------------------------------------------------------------------------------------------\n",
 		"bullet index: ", DeltaForce.bulletIndex, "\n",
-		"Y target: ", options.ballistic[DeltaForce.bulletIndex], "  Y current: ", DeltaForce.counter, "  Y move: ", y, "\n",
-		"X target: ", options.ballisticX[DeltaForce.bulletIndex], "  X current: ", DeltaForce.xCounter, "  X move: ", x, "\n",
+		"Y target: ", targetY, "  Y current: ", DeltaForce.counter, "  Y move: ", y, "\n",
+		"X target: ", targetX, "  X current: ", DeltaForce.xCounter, "  X move: ", x, "\n",
 		"------------------------------------------------------------------------------------------------------------------------------\n",
 	})
 end
@@ -629,6 +655,7 @@ function DeltaForce.OnEvent_NoRecoil (event, arg, family)
 		if DeltaForce.isAimingState("ADS") or DeltaForce.isAimingState("Aim") then
 			DeltaForce.startTime = GetRunningTime()
 			DeltaForce.G1 = true
+			DeltaForce.lastClickIndex = 0
 			DeltaForce.peakState = 0
 			DeltaForce.peakTime = 0
 			DeltaForce.shooting()
