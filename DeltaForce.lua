@@ -53,7 +53,7 @@ userInfo = {
 	--   },
 	--
 	-- 第3步(可选) - 在 G_bind 中绑定快捷键:
-	--   ["G7"] = ".300",
+	--   [".300"] = 7,
 	--
 	canUse = {
 		--口径        模式    系数
@@ -145,31 +145,31 @@ userInfo = {
 		},
 	},
 
-	-- G键自定义绑定，多余的组合键可以删除
+	-- 鼠标 G 键绑定：指令 = 键号，0 = 不启用
 	G_bind = {
-		-- G
-		["G3"] = "",
-		["G4"] = "peak", -- peak摇摆开关 (按G4切换开关，开启后按住左键压枪时自动执行Q↔E摇摆)
-		["G5"] = "",
-		["G6"] = "MP5",
-		["G7"] = "",
-		["G8"] = "",
-		["G9"] = "",
-		["G10"] = "jumpSlide", -- 大跳滑铲 (Space → 800ms → C)
-		["G11"] = "scissors", -- 剪刀 (C → 800ms → Space)
-		-- 非鼠标G键，可以使键盘或者耳机上的G键，默认使用键盘G键，请确保你使用的是可编程的罗技键盘 | F1~12 (Non-mouse G-key)
-		["F1"] = "",
-		["F2"] = "",
-		["F3"] = "",
-		["F4"] = "",
-		["F5"] = "",
-		["F6"] = "",
-		["F7"] = "",
-		["F8"] = "",
-		["F9"] = "",
-		["F10"] = "",
-		["F11"] = "",
-		["F12"] = "",
+		M14 = 0,
+		MK47 = 0,
+		MP5 = 6,
+		PKM = 0,
+		M250 = 0,
+		ASV = 0,
+		MK472 = 0,
+		peak = 4, -- peak摇摆开关
+		jumpSlide = 10, -- 大跳滑铲 (Space → 800ms → C)
+		scissors = 11, -- 剪刀 (C → 800ms → Space)
+	},
+	-- 键盘或耳机 G 键绑定：指令 = F键号，0 = 不启用
+	F_bind = {
+		M14 = 0,
+		MK47 = 0,
+		MP5 = 0,
+		PKM = 0,
+		M250 = 0,
+		ASV = 0,
+		MK472 = 0,
+		peak = 1,
+		jumpSlide = 2,
+		scissors = 3,
 	},
 }
 
@@ -689,8 +689,15 @@ function DeltaForce.shooting ()
 end
 
 -- [[ processing instruction ]]
-function DeltaForce.modifierHandle (modifier)
-	local cmd = userInfo.G_bind[modifier]
+function DeltaForce.modifierHandle (bindings, prefix, arg)
+	local cmd
+	for name, button in pairs(bindings) do
+		if button == arg then
+			cmd = name
+			break
+		end
+	end
+	local modifier = prefix .. arg
 	DeltaForce.renderDom.combo_key = modifier -- Save combination keys
 
 	if (cmd) then
@@ -713,12 +720,10 @@ function OnEvent (event, arg, family)
 
 	-- Switching arsenals according to different types of ammunition
 	if event == "MOUSE_BUTTON_PRESSED" and arg >=3 and arg <= 11 and family == "mouse" then
-		DeltaForce.modifierHandle("G" .. arg)
+		DeltaForce.modifierHandle(userInfo.G_bind, "G", arg)
 	elseif event == "G_PRESSED" and arg >=1 and arg <= 12 then
 		-- if not DeltaForce.runStatus() and userInfo.startControl ~= "G_bind" then return false end
-		local modifier = "F" .. arg
-
-		DeltaForce.modifierHandle(modifier)
+		DeltaForce.modifierHandle(userInfo.F_bind, "F", arg)
 	end
 
 	-- Script deactivated event
